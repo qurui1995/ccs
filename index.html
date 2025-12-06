@@ -243,7 +243,7 @@
             },
 
             // Booking Actions
-            async addBooking(courtId, timeSlot, team1, team2) {
+            async addBooking(courtId, timeSlot, team1, team2, startTime) {
                 const court = state.courts.find(c => c.id === courtId);
                 const newBooking = {
                     id: Math.random().toString(36).substr(2, 9).toUpperCase(),
@@ -252,6 +252,7 @@
                     team1, team2,
                     date: state.date,
                     timeSlot,
+                    customStartTime: startTime,
                     timestamp: Date.now(),
                     accounting: {
                         receivable: court.defaultPrice,
@@ -389,14 +390,12 @@
                         const json = JSON.parse(e.target.result);
                         if (!json.bookings || !json.courts) throw new Error("Invalid format");
 
-                        // Clear and restore logic
                         await db.clear('courts');
                         await db.clear('bookings');
                         await db.clear('settings');
                         await db.clear('generalExpenses');
                         await db.clear('monthlyFixedCosts');
 
-                        // Use transactions for batch inserts
                         const stores = ['courts', 'bookings', 'settings', 'generalExpenses', 'monthlyFixedCosts'];
                         const tx = db.db.transaction(stores, 'readwrite');
 
@@ -485,12 +484,12 @@
                         const booking = state.bookings.find(b => b.courtId === court.id && b.date === state.date && b.timeSlot === slot);
                         if (booking) {
                             return `
-                            <div class="relative bg-red-50 border border-red-200 rounded-lg p-2 h-24 flex flex-col justify-center items-center text-center">
+                            <div class="relative bg-red-50 border border-red-200 rounded-lg p-2 h-24 flex flex-col justify-center items-center text-center cursor-pointer" onclick="handlers.openBookingModal('${court.id}', ${slot})">
                                 <div class="text-[10px] font-bold text-red-500 mb-1 flex items-center gap-1"><div class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div> 已订</div>
                                 <div class="font-bold text-slate-800 text-xs truncate w-full">${booking.team1}</div>
                                 <div class="text-[10px] text-slate-400 font-bold">VS</div>
                                 <div class="font-bold text-slate-800 text-xs truncate w-full">${booking.team2}</div>
-                                <div class="absolute top-1 right-1 text-[10px] text-slate-400 font-mono">${slot}:00</div>
+                                <div class="absolute top-1 right-1 text-[10px] text-slate-400 font-mono">${booking.customStartTime || (slot + ':00')}</div>
                             </div>`;
                         }
                         return `
@@ -572,7 +571,7 @@
                             <div class="p-3 bg-slate-50/50 flex justify-between items-center" onclick="handlers.toggleBookingAccordion('${b.id}')">
                                 <div class="flex items-center gap-3">
                                     <div class="bg-brand-100 text-brand-700 w-10 h-10 rounded-lg flex items-center justify-center font-bold text-xs">${courtName}</div>
-                                    <div><div class="text-xs text-slate-500">${b.date.slice(5)} ${b.timeSlot}:00</div><div class="font-bold text-sm text-slate-800">${b.team1} vs ${b.team2}</div></div>
+                                    <div><div class="text-xs text-slate-500">${b.date.slice(5)} ${b.customStartTime || (b.timeSlot+':00')}</div><div class="font-bold text-sm text-slate-800">${b.team1} vs ${b.team2}</div></div>
                                 </div>
                                 <div class="text-right"><div class="text-xs text-slate-400">净利</div><div class="font-mono font-bold ${thisProfit>=0?'text-green-600':'text-red-500'}">¥${thisProfit}</div></div>
                             </div>
@@ -759,7 +758,7 @@
 
                 return `
                 <div class="animate-fade-in p-4 pb-20">
-                    <div class="bg-slate-900 text-white p-6 rounded-2xl shadow-lg mb-6"><h1 class="text-xl font-bold">后台管理</h1><p class="text-xs text-slate-400 mt-1">版本 HTML/JS v1.0.5</p></div>
+                    <div class="bg-slate-900 text-white p-6 rounded-2xl shadow-lg mb-6"><h1 class="text-xl font-bold">后台管理</h1><p class="text-xs text-slate-400 mt-1">版本 HTML/JS v1.0.6</p></div>
                     
                     <div class="flex gap-2 mb-6">
                         <button onclick="app.backupData()" class="flex-1 bg-white border border-slate-200 text-slate-700 py-3 rounded-xl shadow-sm hover:bg-slate-50 flex items-center justify-center gap-2 font-bold"><i data-lucide="download" class="w-4 h-4 text-brand-600"></i> 备份数据</button>
@@ -796,6 +795,46 @@
             // Booking
             openBookingModal: (courtId, slot) => {
                 const court = state.courts.find(c => c.id === courtId);
+                // Pre-calculate booking if exists to edit? No, currently modal is for adding. Editing is limited.
+                // But wait, the requirement says "modify start time" of an existing slot? 
+                // "点开18:00的版块进入修改开始时间" - implies if booked, we can click to edit?
+                // Currently, clicking a booked slot does nothing in the `home` view template (it has cursor-default).
+                // I need to change `views.home` to allow clicking booked slots to EDIT them?
+                // The prompt says "Modify start time... still occupying the 18:00 reservation".
+                // This implies editing an existing booking. 
+                // My current implementation allows SETTING custom time when CREATING.
+                // Let's update `views.home` to allow clicking booked slots to Edit.
+                
+                // Check if booked
+                const booking = state.bookings.find(b => b.courtId === courtId && b.date === state.date && b.timeSlot === slot);
+                
+                if (booking) {
+                    // Edit Mode
+                    const html = `
+                    <div class="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                        <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden">
+                            <div class="bg-slate-900 p-4 text-white flex justify-between items-center">
+                                <div><div class="font-bold text-lg">修改预约</div><div class="text-xs text-slate-400">${court.name} | ${slot}:00</div></div>
+                                <button onclick="handlers.closeModal()"><i data-lucide="x" class="w-6 h-6"></i></button>
+                            </div>
+                            <div class="p-6 space-y-4">
+                                <div class="flex items-center gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                    <i data-lucide="clock" class="w-4 h-4 text-slate-400"></i>
+                                    <span class="text-sm font-bold text-slate-600">开始时间</span>
+                                    <input type="time" id="edit-start-time" value="${booking.customStartTime || (slot+':00')}" class="ml-auto bg-white border border-slate-300 rounded px-2 py-1 text-sm font-mono font-bold" />
+                                </div>
+                                <div class="text-center font-bold text-slate-800">${booking.team1} VS ${booking.team2}</div>
+                                <button onclick="handlers.updateBookingTime('${booking.id}')" class="w-full bg-brand-600 text-white py-3 rounded-xl font-bold shadow-lg mt-2">保存修改</button>
+                                <button onclick="handlers.deleteBooking('${booking.id}'); handlers.closeModal();" class="w-full text-red-500 text-sm py-2">取消预约</button>
+                            </div>
+                        </div>
+                    </div>`;
+                    document.getElementById('modal-container').innerHTML = html;
+                    lucide.createIcons();
+                    return;
+                }
+
+                // Create Mode (Existing logic)
                 const html = `
                 <div class="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
                     <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden">
@@ -804,6 +843,11 @@
                             <button onclick="handlers.closeModal()"><i data-lucide="x" class="w-6 h-6"></i></button>
                         </div>
                         <div class="p-6 space-y-4">
+                            <div class="flex items-center gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                <i data-lucide="clock" class="w-4 h-4 text-slate-400"></i>
+                                <span class="text-sm font-bold text-slate-600">开始时间</span>
+                                <input type="time" id="start-time" value="${slot}:00" class="ml-auto bg-white border border-slate-300 rounded px-2 py-1 text-sm font-mono font-bold" />
+                            </div>
                             <div class="flex flex-col sm:flex-row items-center gap-4">
                                 <div class="flex-1 w-full space-y-1"><label class="text-xs font-bold text-slate-500">主队</label><input id="team1" placeholder="队伍 A" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-center font-bold"></div>
                                 <div class="font-bold text-slate-300 pt-0 sm:pt-4">VS</div>
@@ -820,10 +864,22 @@
             confirmBooking: async (courtId, slot) => {
                 const t1 = document.getElementById('team1').value;
                 const t2 = document.getElementById('team2').value;
+                const st = document.getElementById('start-time').value;
                 if(t1 && t2) {
-                    await app.addBooking(courtId, slot, t1, t2);
+                    await app.addBooking(courtId, slot, t1, t2, st);
                     handlers.closeModal();
                 } else alert('请输入队伍名称');
+            },
+            updateBookingTime: async (bookingId) => {
+                const newTime = document.getElementById('edit-start-time').value;
+                const booking = state.bookings.find(b => b.id === bookingId);
+                if(booking) {
+                    booking.customStartTime = newTime;
+                    await db.put('bookings', booking);
+                    await app.loadData();
+                    router.render();
+                    handlers.closeModal();
+                }
             },
             deleteBooking: async (id) => {
                 if(confirm('确定取消?')) await app.deleteBooking(id);
