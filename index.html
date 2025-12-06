@@ -39,6 +39,19 @@
             appearance: textfield;
         }
     </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
+    "react-router-dom": "https://aistudiocdn.com/react-router-dom@^7.10.1"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
 </head>
 <body class="bg-slate-100 text-slate-900 antialiased pb-24">
 
@@ -151,6 +164,15 @@
                 });
             }
 
+            async clear(storeName) {
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction(storeName, 'readwrite');
+                    const store = tx.objectStore(storeName);
+                    store.clear();
+                    tx.oncomplete = () => resolve();
+                });
+            }
+
             async seedDefaults() {
                 const courts = await this.getAll('courts');
                 if (courts.length === 0) {
@@ -180,6 +202,7 @@
             resetConfirmStep: 0, // 0: Normal, 1: Confirm
             editingCourtNameId: null, // Admin name editing
             editingCourtPriceId: null, // Admin price editing
+            editingCourtLocationId: null, // Admin location editing
             
             // Reports View State
             reportViewMode: 'month', // week, month, year
@@ -304,6 +327,15 @@
                     router.render();
                 }
             },
+            async updateCourtLocation(id, location) {
+                const court = state.courts.find(c => c.id === id);
+                if(court) {
+                    court.location = location;
+                    await db.put('courts', court);
+                    await this.loadData();
+                    router.render();
+                }
+            },
 
             // Misc Actions
             async updateDefaultExpenses(expenses) {
@@ -327,6 +359,65 @@
                 router.render();
             },
             
+            // Backup & Restore
+            async backupData() {
+                const backup = {
+                    version: 1,
+                    timestamp: new Date().toISOString(),
+                    courts: await db.getAll('courts'),
+                    bookings: await db.getAll('bookings'),
+                    settings: await db.getAll('settings'),
+                    generalExpenses: await db.getAll('generalExpenses'),
+                    monthlyFixedCosts: await db.getAll('monthlyFixedCosts')
+                };
+                
+                const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `记账备份_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            },
+
+            async restoreData(file) {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    try {
+                        const json = JSON.parse(e.target.result);
+                        if (!json.bookings || !json.courts) throw new Error("Invalid format");
+
+                        // Clear and restore logic
+                        await db.clear('courts');
+                        await db.clear('bookings');
+                        await db.clear('settings');
+                        await db.clear('generalExpenses');
+                        await db.clear('monthlyFixedCosts');
+
+                        // Use transactions for batch inserts
+                        const stores = ['courts', 'bookings', 'settings', 'generalExpenses', 'monthlyFixedCosts'];
+                        const tx = db.db.transaction(stores, 'readwrite');
+
+                        json.courts?.forEach(c => tx.objectStore('courts').put(c));
+                        json.bookings?.forEach(b => tx.objectStore('bookings').put(b));
+                        json.settings?.forEach(s => tx.objectStore('settings').put(s));
+                        json.generalExpenses?.forEach(g => tx.objectStore('generalExpenses').put(g));
+                        json.monthlyFixedCosts?.forEach(m => tx.objectStore('monthlyFixedCosts').put(m));
+
+                        tx.oncomplete = () => {
+                            alert('数据恢复成功，即将刷新页面');
+                            location.reload();
+                        };
+                    } catch (err) {
+                        alert('恢复失败: 文件格式错误');
+                        console.error(err);
+                    }
+                };
+                reader.readAsText(file);
+            },
+
             exportToCSV() {
                 let csvContent = "\uFEFF类型,日期,项目/对阵,收入,支出,利润,详情\n";
                 state.bookings.forEach(b => {
@@ -608,32 +699,45 @@
                 const courtsList = state.courts.map(c => `
                     <div class="bg-white p-3 rounded-lg border border-slate-200 mb-2 shadow-sm flex justify-between items-center relative group">
                         <div class="flex-1 pr-4">
-                            ${state.editingCourtNameId === c.id ? 
-                                `<div class="flex items-center gap-1 mb-1">
-                                    <input id="edit-name-${c.id}" value="${c.name}" class="font-bold text-slate-800 border rounded p-1 w-32" />
-                                    <button onclick="handlers.saveCourtName('${c.id}')" class="text-green-600 bg-green-50 p-1 rounded"><i data-lucide="check" class="w-3 h-3"></i></button>
-                                    <button onclick="handlers.toggleEditName(null)" class="text-red-500 bg-red-50 p-1 rounded"><i data-lucide="x" class="w-3 h-3"></i></button>
-                                </div>` 
-                                : 
-                                `<div onclick="handlers.toggleEditName('${c.id}')" class="font-bold text-slate-800 cursor-pointer hover:text-brand-600 flex items-center gap-1" title="点击修改名称">
-                                    ${c.name} <i data-lucide="edit-3" class="w-3 h-3 text-slate-300"></i>
-                                </div>`
-                            }
-                            
-                            <div class="text-xs text-slate-400 flex items-center gap-2 mt-1">
-                                <span>${c.location}</span>
-                                <span>|</span>
-                                ${state.editingCourtPriceId === c.id ?
+                            <div class="space-y-1">
+                                ${state.editingCourtNameId === c.id ? 
                                     `<div class="flex items-center gap-1">
-                                        <span class="text-slate-600">¥</span>
+                                        <input id="edit-name-${c.id}" value="${c.name}" class="font-bold text-slate-800 border rounded p-1 w-32" />
+                                        <button onclick="handlers.saveCourtName('${c.id}')" class="text-green-600 bg-green-50 p-1 rounded"><i data-lucide="check" class="w-3 h-3"></i></button>
+                                        <button onclick="handlers.toggleEditName(null)" class="text-red-500 bg-red-50 p-1 rounded"><i data-lucide="x" class="w-3 h-3"></i></button>
+                                    </div>` 
+                                    : 
+                                    `<div onclick="handlers.toggleEditName('${c.id}')" class="font-bold text-slate-800 cursor-pointer hover:text-brand-600 flex items-center gap-1" title="点击修改名称">
+                                        ${c.name} <i data-lucide="edit-3" class="w-3 h-3 text-slate-300"></i>
+                                    </div>`
+                                }
+                                
+                                ${state.editingCourtLocationId === c.id ?
+                                    `<div class="flex items-center gap-1">
+                                        <i data-lucide="map-pin" class="w-3 h-3 text-slate-400"></i>
+                                        <input id="edit-loc-${c.id}" value="${c.location}" class="text-xs text-slate-600 border rounded p-1 w-24" />
+                                        <button onclick="handlers.saveCourtLocation('${c.id}')" class="text-green-600 bg-green-50 p-0.5 rounded"><i data-lucide="check" class="w-3 h-3"></i></button>
+                                        <button onclick="handlers.toggleEditLocation(null)" class="text-red-500 bg-red-50 p-0.5 rounded"><i data-lucide="x" class="w-3 h-3"></i></button>
+                                    </div>`
+                                    :
+                                    `<div onclick="handlers.toggleEditLocation('${c.id}')" class="flex items-center gap-1 text-xs text-slate-400 cursor-pointer hover:text-brand-600" title="点击修改地址">
+                                       <i data-lucide="map-pin" class="w-3 h-3"></i>
+                                       ${c.location}
+                                       <i data-lucide="edit-3" class="w-3 h-3 text-slate-300 opacity-50"></i>
+                                    </div>`
+                                }
+
+                                ${state.editingCourtPriceId === c.id ?
+                                    `<div class="flex items-center gap-1 mt-1">
+                                        <span class="text-slate-600 text-xs">¥</span>
                                         <input id="edit-price-${c.id}" type="number" value="${c.defaultPrice}" class="w-16 border rounded p-0.5 text-xs font-mono font-bold" />
                                         <button onclick="handlers.saveCourtPrice('${c.id}')" class="text-green-600 hover:bg-green-50 rounded"><i data-lucide="check" class="w-3 h-3"></i></button>
                                         <button onclick="handlers.toggleEditPrice(null)" class="text-red-500 hover:bg-red-50 rounded"><i data-lucide="x" class="w-3 h-3"></i></button>
                                     </div>`
                                     :
-                                    `<span onclick="handlers.toggleEditPrice('${c.id}')" class="font-mono text-brand-600 font-bold cursor-pointer hover:underline flex items-center gap-1">
+                                    `<div onclick="handlers.toggleEditPrice('${c.id}')" class="mt-1 font-mono text-brand-600 font-bold cursor-pointer hover:underline flex items-center gap-1 text-xs">
                                         ¥${c.defaultPrice}/场 <i data-lucide="edit-2" class="w-3 h-3 text-slate-300"></i>
-                                    </span>`
+                                    </div>`
                                 }
                             </div>
                         </div>
@@ -655,7 +759,14 @@
 
                 return `
                 <div class="animate-fade-in p-4 pb-20">
-                    <div class="bg-slate-900 text-white p-6 rounded-2xl shadow-lg mb-6"><h1 class="text-xl font-bold">后台管理</h1><p class="text-xs text-slate-400 mt-1">版本 HTML/JS v1.0.3</p></div>
+                    <div class="bg-slate-900 text-white p-6 rounded-2xl shadow-lg mb-6"><h1 class="text-xl font-bold">后台管理</h1><p class="text-xs text-slate-400 mt-1">版本 HTML/JS v1.0.5</p></div>
+                    
+                    <div class="flex gap-2 mb-6">
+                        <button onclick="app.backupData()" class="flex-1 bg-white border border-slate-200 text-slate-700 py-3 rounded-xl shadow-sm hover:bg-slate-50 flex items-center justify-center gap-2 font-bold"><i data-lucide="download" class="w-4 h-4 text-brand-600"></i> 备份数据</button>
+                        <button onclick="document.getElementById('file-restore').click()" class="flex-1 bg-white border border-slate-200 text-slate-700 py-3 rounded-xl shadow-sm hover:bg-slate-50 flex items-center justify-center gap-2 font-bold"><i data-lucide="upload" class="w-4 h-4 text-brand-600"></i> 恢复数据</button>
+                        <input type="file" id="file-restore" class="hidden" accept=".json" onchange="app.restoreData(this.files[0])">
+                    </div>
+
                     <div class="flex justify-between items-center mb-3"><h3 class="font-bold text-slate-700">场地管理</h3><button onclick="handlers.openAddCourtModal()" class="text-brand-600 text-sm font-bold flex items-center gap-1"><i data-lucide="plus" class="w-4 h-4"></i> 新增</button></div>
                     <div>${courtsList}</div>
                     <div class="mt-8 text-center">${resetButtonHtml}</div>
@@ -821,12 +932,17 @@
                 const val = document.getElementById(`edit-name-${id}`).value;
                 if(val) { await app.updateCourtName(id, val); state.editingCourtNameId = null; router.render(); }
             },
-
-            // Price Editing (ADDED)
+            // Price Editing
             toggleEditPrice: (id) => { state.editingCourtPriceId = id; router.render(); },
             saveCourtPrice: async (id) => {
                 const val = document.getElementById(`edit-price-${id}`).value;
                 if(val) { await app.updateCourtPrice(id, parseFloat(val)||0); state.editingCourtPriceId = null; router.render(); }
+            },
+            // Location Editing
+            toggleEditLocation: (id) => { state.editingCourtLocationId = id; router.render(); },
+            saveCourtLocation: async (id) => {
+                const val = document.getElementById(`edit-loc-${id}`).value;
+                if(val) { await app.updateCourtLocation(id, val); state.editingCourtLocationId = null; router.render(); }
             },
 
             // Reset
@@ -847,5 +963,6 @@
 
         app.init();
     </script>
+<script type="module" src="/index.tsx"></script>
 </body>
 </html>
