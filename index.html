@@ -51,7 +51,6 @@
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
 </head>
 <body class="bg-slate-100 text-slate-900 antialiased pb-24">
 
@@ -243,8 +242,7 @@
             },
 
             // Booking Actions
-            async addBooking(courtId, timeSlot, team1, team2, startTime) {
-                const court = state.courts.find(c => c.id === courtId);
+            async addBooking(courtId, timeSlot, team1, team2, startTime, customPrice) {
                 const newBooking = {
                     id: Math.random().toString(36).substr(2, 9).toUpperCase(),
                     courtId,
@@ -255,7 +253,7 @@
                     customStartTime: startTime,
                     timestamp: Date.now(),
                     accounting: {
-                        receivable: court.defaultPrice,
+                        receivable: parseFloat(customPrice) || 0,
                         received: 0,
                         expenses: JSON.parse(JSON.stringify(state.defaultExpenses))
                     }
@@ -795,17 +793,6 @@
             // Booking
             openBookingModal: (courtId, slot) => {
                 const court = state.courts.find(c => c.id === courtId);
-                // Pre-calculate booking if exists to edit? No, currently modal is for adding. Editing is limited.
-                // But wait, the requirement says "modify start time" of an existing slot? 
-                // "点开18:00的版块进入修改开始时间" - implies if booked, we can click to edit?
-                // Currently, clicking a booked slot does nothing in the `home` view template (it has cursor-default).
-                // I need to change `views.home` to allow clicking booked slots to EDIT them?
-                // The prompt says "Modify start time... still occupying the 18:00 reservation".
-                // This implies editing an existing booking. 
-                // My current implementation allows SETTING custom time when CREATING.
-                // Let's update `views.home` to allow clicking booked slots to Edit.
-                
-                // Check if booked
                 const booking = state.bookings.find(b => b.courtId === courtId && b.date === state.date && b.timeSlot === slot);
                 
                 if (booking) {
@@ -834,7 +821,7 @@
                     return;
                 }
 
-                // Create Mode (Existing logic)
+                // Create Mode
                 const html = `
                 <div class="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
                     <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden">
@@ -853,7 +840,13 @@
                                 <div class="font-bold text-slate-300 pt-0 sm:pt-4">VS</div>
                                 <div class="flex-1 w-full space-y-1"><label class="text-xs font-bold text-slate-500">客队</label><input id="team2" placeholder="队伍 B" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-center font-bold"></div>
                             </div>
-                            <div class="bg-brand-50 p-3 rounded-lg text-brand-700 text-sm flex justify-between font-bold"><span>费用</span><span>¥${court.defaultPrice}</span></div>
+                            <div class="bg-brand-50 p-3 rounded-lg border border-brand-100 flex justify-between items-center">
+                                <span class="text-sm font-bold text-brand-700">预约费用 (应收)</span>
+                                <div class="relative">
+                                    <span class="absolute left-2 top-1.5 text-xs text-brand-400">¥</span>
+                                    <input type="number" id="booking-price" value="${court.defaultPrice}" class="w-24 pl-5 p-1 text-right font-bold text-brand-700 border border-brand-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none font-mono" />
+                                </div>
+                            </div>
                             <button onclick="handlers.confirmBooking('${courtId}', ${slot})" class="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg mt-2">确认</button>
                         </div>
                     </div>
@@ -865,8 +858,9 @@
                 const t1 = document.getElementById('team1').value;
                 const t2 = document.getElementById('team2').value;
                 const st = document.getElementById('start-time').value;
+                const price = document.getElementById('booking-price').value;
                 if(t1 && t2) {
-                    await app.addBooking(courtId, slot, t1, t2, st);
+                    await app.addBooking(courtId, slot, t1, t2, st, price);
                     handlers.closeModal();
                 } else alert('请输入队伍名称');
             },
@@ -1019,6 +1013,5 @@
 
         app.init();
     </script>
-<script type="module" src="/index.tsx"></script>
 </body>
 </html>
