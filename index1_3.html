@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>长虫山足球公园管理系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff', 100: '#e0f2fe', 500: '#0ea5e9', 600: '#0284c7', 700: '#0369a1', 900: '#0c4a6e',
+                        }
+                    },
+                    padding: { 'safe-bottom': 'env(safe-area-inset-bottom)' }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { -webkit-tap-highlight-color: transparent; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Remove number input arrows */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
+    "react-router-dom": "https://aistudiocdn.com/react-router-dom@^7.10.1"
+  }
+}
+</script>
+</head>
+<body class="bg-slate-100 text-slate-900 antialiased pb-24">
+
+    <!-- App Container -->
+    <div id="app" class="max-w-md mx-auto sm:max-w-full sm:px-0">
+        <!-- Content injected by JS -->
+    </div>
+
+    <!-- Bottom Navigation -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-2 pb-safe-bottom z-50 flex justify-between items-center text-xs font-medium text-slate-500 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        <button onclick="router.navigate('home')" class="nav-btn flex flex-col items-center gap-1 p-2 w-16" data-target="home">
+            <i data-lucide="layout-grid" class="w-6 h-6 mb-0.5"></i>
+            <span>看板</span>
+        </button>
+        <button onclick="router.navigate('ledger')" class="nav-btn flex flex-col items-center gap-1 p-2 w-16" data-target="ledger">
+            <i data-lucide="wallet" class="w-6 h-6 mb-0.5"></i>
+            <span>账本</span>
+        </button>
+        <button onclick="router.navigate('reports')" class="nav-btn flex flex-col items-center gap-1 p-2 w-16" data-target="reports">
+            <i data-lucide="bar-chart-3" class="w-6 h-6 mb-0.5"></i>
+            <span>报表</span>
+        </button>
+        <button onclick="router.navigate('admin')" class="nav-btn flex flex-col items-center gap-1 p-2 w-16" data-target="admin">
+            <i data-lucide="shield-check" class="w-6 h-6 mb-0.5"></i>
+            <span>管理</span>
+        </button>
+    </nav>
+
+    <!-- Modal Container -->
+    <div id="modal-container"></div>
+
+    <script>
+        /**
+         * Constants & Types
+         */
+        const DB_NAME = 'ChangchongSoccerDB';
+        const DB_VERSION = 2; // Incremented for new stores
+        const TIME_SLOTS = [10, 12, 14, 16, 18, 20];
+
+        const DEFAULT_COURTS = [
+            { id: 'c1', name: '长虫山1号球场', type: '足球场', description: '11人制天然草专业赛场', location: 'A区', defaultPrice: 2200 },
+            { id: 'c2', name: '长虫山2号球场', type: '足球场', description: '11人制优质人造草皮', location: 'A区', defaultPrice: 2200 },
+            { id: 'c3', name: '长虫山3号球场', type: '足球场', description: '7人制人造草球场', location: 'B区', defaultPrice: 2200 },
+            { id: 'c4', name: '长虫山4号球场', type: '足球场', description: '7人制球场', location: 'B区', defaultPrice: 2200 },
+            { id: 'c5', name: '长虫山5号球场', type: '足球场', description: '5人制笼式足球场', location: 'C区', defaultPrice: 2200 },
+            { id: 'c6', name: '长虫山6号球场', type: '足球场', description: '5人制笼式足球场', location: 'C区', defaultPrice: 2200 }
+        ];
+
+        const DEFAULT_EXPENSES = [
+            { id: 'exp_1', name: '裁判费', amount: 0, isFixed: true },
+            { id: 'exp_2', name: '中介费', amount: 0, isFixed: true },
+            { id: 'exp_3', name: '水费', amount: 0, isFixed: true },
+            { id: 'exp_4', name: '场地维护费', amount: 0, isFixed: true },
+        ];
+
+        /**
+         * IndexedDB Wrapper
+         */
+        class DB {
+            constructor() {
+                this.db = null;
+            }
+
+            async connect() {
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains('courts')) db.createObjectStore('courts', { keyPath: 'id' });
+                        if (!db.objectStoreNames.contains('bookings')) db.createObjectStore('bookings', { keyPath: 'id' });
+                        if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'key' });
+                        if (!db.objectStoreNames.contains('generalExpenses')) db.createObjectStore('generalExpenses', { keyPath: 'id' });
+                        if (!db.objectStoreNames.contains('monthlyFixedCosts')) db.createObjectStore('monthlyFixedCosts', { keyPath: 'month' });
+                    };
+
+                    request.onsuccess = (event) => {
+                        this.db = event.target.result;
+                        resolve(this.db);
+                    };
+
+                    request.onerror = (event) => reject(event.target.error);
+                });
+            }
+
+            async getAll(storeName) {
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction(storeName, 'readonly');
+                    const store = tx.objectStore(storeName);
+                    const request = store.getAll();
+                    request.onsuccess = () => resolve(request.result);
+                });
+            }
+
+            async put(storeName, item) {
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction(storeName, 'readwrite');
+                    const store = tx.objectStore(storeName);
+                    store.put(item);
+                    tx.oncomplete = () => resolve();
+                });
+            }
+
+            async delete(storeName, id) {
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction(storeName, 'readwrite');
+                    const store = tx.objectStore(storeName);
+                    store.delete(id);
+                    tx.oncomplete = () => resolve();
+                });
+            }
+
+            async clear(storeName) {
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction(storeName, 'readwrite');
+                    const store = tx.objectStore(storeName);
+                    store.clear();
+                    tx.oncomplete = () => resolve();
+                });
+            }
+
+            async seedDefaults() {
+                const courts = await this.getAll('courts');
+                if (courts.length === 0) {
+                    for (const court of DEFAULT_COURTS) await this.put('courts', court);
+                }
+                
+                const settings = await this.getAll('settings');
+                const defaultExp = settings.find(s => s.key === 'defaultExpenses');
+                if (!defaultExp) {
+                    await this.put('settings', { key: 'defaultExpenses', value: DEFAULT_EXPENSES });
+                }
+            }
+        }
+
+        /**
+         * Application State
+         */
+        const state = {
+            currentRoute: 'home',
+            date: new Date().toISOString().split('T')[0],
+            courts: [],
+            bookings: [],
+            defaultExpenses: [],
+            generalExpenses: [],
+            monthlyFixedCosts: [],
+            editingBookingId: null, // For expanded accordion
+            resetConfirmStep: 0, // 0: Normal, 1: Confirm
+            editingCourtNameId: null, // Admin name editing
+            editingCourtPriceId: null, // Admin price editing
+            editingCourtLocationId: null, // Admin location editing
+            
+            // Reports View State
+            reportViewMode: 'month', // week, month, year
+            reportRefDate: new Date(),
+        };
+
+        const db = new DB();
+
+        /**
+         * Helpers
+         */
+        const formatDate = (date) => {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        /**
+         * Main Application Logic
+         */
+        const app = {
+            async init() {
+                await db.connect();
+                await db.seedDefaults();
+                await this.loadData();
+                router.render();
+            },
+
+            async loadData() {
+                state.courts = await db.getAll('courts');
+                state.bookings = await db.getAll('bookings');
+                state.generalExpenses = await db.getAll('generalExpenses');
+                state.monthlyFixedCosts = await db.getAll('monthlyFixedCosts');
+                const settings = await db.getAll('settings');
+                const expSetting = settings.find(s => s.key === 'defaultExpenses');
+                state.defaultExpenses = expSetting ? expSetting.value : DEFAULT_EXPENSES;
+            },
+
+            // Booking Actions
+            async addBooking(courtId, timeSlot, team1, team2, startTime, customPrice) {
+                const newBooking = {
+                    id: Math.random().toString(36).substr(2, 9).toUpperCase(),
+                    courtId,
+                    userId: 'ADMIN',
+                    team1, team2,
+                    date: state.date,
+                    timeSlot,
+                    customStartTime: startTime,
+                    timestamp: Date.now(),
+                    accounting: {
+                        receivable: parseFloat(customPrice) || 0,
+                        received: 0,
+                        expenses: JSON.parse(JSON.stringify(state.defaultExpenses))
+                    }
+                };
+                await db.put('bookings', newBooking);
+                await this.loadData();
+                router.render();
+            },
+
+            async deleteBooking(id) {
+                await db.delete('bookings', id);
+                await this.loadData();
+                router.render();
+            },
+
+            async updateBookingAccounting(id, accounting) {
+                const booking = state.bookings.find(b => b.id === id);
+                if (booking) {
+                    booking.accounting = accounting;
+                    await db.put('bookings', booking);
+                    await this.loadData();
+                    router.render();
+                }
+            },
+
+            async batchUpdateExpenses(bookingsToUpdate) {
+                const tx = db.db.transaction('bookings', 'readwrite');
+                const store = tx.objectStore('bookings');
+                bookingsToUpdate.forEach(b => store.put(b));
+                return new Promise(resolve => {
+                    tx.oncomplete = async () => {
+                        await this.loadData();
+                        router.render();
+                        resolve();
+                    };
+                });
+            },
+
+            // Court Actions
+            async addCourt(court) {
+                await db.put('courts', court);
+                await this.loadData();
+                router.render();
+            },
+            async deleteCourt(id) {
+                await db.delete('courts', id);
+                await this.loadData();
+                router.render();
+            },
+            async updateCourt(court) {
+                await db.put('courts', court);
+                await this.loadData();
+                router.render();
+            },
+            async updateCourtName(id, name) {
+                const court = state.courts.find(c => c.id === id);
+                if(court) {
+                    court.name = name;
+                    await db.put('courts', court);
+                    await this.loadData();
+                    router.render();
+                }
+            },
+            async updateCourtPrice(id, price) {
+                const court = state.courts.find(c => c.id === id);
+                if(court) {
+                    court.defaultPrice = price;
+                    await db.put('courts', court);
+                    await this.loadData();
+                    router.render();
+                }
+            },
+            async updateCourtLocation(id, location) {
+                const court = state.courts.find(c => c.id === id);
+                if(court) {
+                    court.location = location;
+                    await db.put('courts', court);
+                    await this.loadData();
+                    router.render();
+                }
+            },
+
+            // Misc Actions
+            async updateDefaultExpenses(expenses) {
+                await db.put('settings', { key: 'defaultExpenses', value: expenses });
+                await this.loadData();
+                router.render();
+            },
+            async addGeneralExpense(exp) {
+                await db.put('generalExpenses', exp);
+                await this.loadData();
+                router.render();
+            },
+            async deleteGeneralExpense(id) {
+                await db.delete('generalExpenses', id);
+                await this.loadData();
+                router.render();
+            },
+            async updateMonthlyFixedCost(month, amount) {
+                await db.put('monthlyFixedCosts', { month, amount });
+                await this.loadData();
+                router.render();
+            },
+            
+            // Backup & Restore
+            async backupData() {
+                const backup = {
+                    version: 1,
+                    timestamp: new Date().toISOString(),
+                    courts: await db.getAll('courts'),
+                    bookings: await db.getAll('bookings'),
+                    settings: await db.getAll('settings'),
+                    generalExpenses: await db.getAll('generalExpenses'),
+                    monthlyFixedCosts: await db.getAll('monthlyFixedCosts')
+                };
+                
+                const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `记账备份_${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            },
+
+            async restoreData(file) {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    try {
+                        const json = JSON.parse(e.target.result);
+                        if (!json.bookings || !json.courts) throw new Error("Invalid format");
+
+                        await db.clear('courts');
+                        await db.clear('bookings');
+                        await db.clear('settings');
+                        await db.clear('generalExpenses');
+                        await db.clear('monthlyFixedCosts');
+
+                        const stores = ['courts', 'bookings', 'settings', 'generalExpenses', 'monthlyFixedCosts'];
+                        const tx = db.db.transaction(stores, 'readwrite');
+
+                        json.courts?.forEach(c => tx.objectStore('courts').put(c));
+                        json.bookings?.forEach(b => tx.objectStore('bookings').put(b));
+                        json.settings?.forEach(s => tx.objectStore('settings').put(s));
+                        json.generalExpenses?.forEach(g => tx.objectStore('generalExpenses').put(g));
+                        json.monthlyFixedCosts?.forEach(m => tx.objectStore('monthlyFixedCosts').put(m));
+
+                        tx.oncomplete = () => {
+                            alert('数据恢复成功，即将刷新页面');
+                            location.reload();
+                        };
+                    } catch (err) {
+                        alert('恢复失败: 文件格式错误');
+                        console.error(err);
+                    }
+                };
+                reader.readAsText(file);
+            },
+
+            exportToCSV() {
+                let csvContent = "\uFEFF类型,日期,项目/对阵,收入,支出,利润,详情\n";
+                state.bookings.forEach(b => {
+                    const court = state.courts.find(c => c.id === b.courtId);
+                    const acc = b.accounting;
+                    const totalExp = acc.expenses.reduce((s, e) => s + (Number(e.amount)||0), 0);
+                    const profit = acc.received - totalExp;
+                    const expDetail = acc.expenses.map(e => `${e.name}:${e.amount}`).join('; ');
+                    const row = ['球场预约', b.date, `${court ? court.name : '未知'} ${b.timeSlot}:00 (${b.team1} vs ${b.team2})`, acc.received, totalExp, profit, `"${expDetail}"`];
+                    csvContent += row.join(",") + "\n";
+                });
+                state.generalExpenses.forEach(e => {
+                    csvContent += `其他支出,${e.date},${e.name},0,${e.amount},-${e.amount},-\n`;
+                });
+                state.monthlyFixedCosts.forEach(m => {
+                    csvContent += `固定月费,${m.month}-01,月度固定支出,0,${m.amount},-${m.amount},-\n`;
+                });
+                const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+                const link = document.createElement("a");
+                const url = URL.createObjectURL(blob);
+                link.setAttribute("href", url);
+                link.setAttribute("download", `长虫山财务导出_${new Date().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        };
+
+        /**
+         * View Renderers
+         */
+        const router = {
+            navigate(route) {
+                state.currentRoute = route;
+                state.resetConfirmStep = 0;
+                this.render();
+            },
+            render() {
+                const appDiv = document.getElementById('app');
+                const navBtns = document.querySelectorAll('.nav-btn');
+                navBtns.forEach(btn => {
+                    if(btn.dataset.target === state.currentRoute) {
+                        btn.classList.add('text-brand-600'); btn.classList.remove('text-slate-500');
+                    } else {
+                        btn.classList.remove('text-brand-600'); btn.classList.add('text-slate-500');
+                    }
+                });
+
+                switch(state.currentRoute) {
+                    case 'home': appDiv.innerHTML = views.home(); break;
+                    case 'ledger': appDiv.innerHTML = views.ledger(); break;
+                    case 'reports': appDiv.innerHTML = views.reports(); break;
+                    case 'admin': appDiv.innerHTML = views.admin(); break;
+                }
+                lucide.createIcons();
+            }
+        };
+
+        const views = {
+            home: () => {
+                const dateDisplay = new Date(state.date).toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' });
+                
+                let courtsHtml = state.courts.map(court => {
+                    let slotsHtml = TIME_SLOTS.map(slot => {
+                        const booking = state.bookings.find(b => b.courtId === court.id && b.date === state.date && b.timeSlot === slot);
+                        if (booking) {
+                            return `
+                            <div class="relative bg-red-50 border border-red-200 rounded-lg p-2 h-24 flex flex-col justify-center items-center text-center cursor-pointer" onclick="handlers.openBookingModal('${court.id}', ${slot})">
+                                <div class="text-[10px] font-bold text-red-500 mb-1 flex items-center gap-1"><div class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div> 已订</div>
+                                <div class="font-bold text-slate-800 text-xs truncate w-full">${booking.team1}</div>
+                                <div class="text-[10px] text-slate-400 font-bold">VS</div>
+                                <div class="font-bold text-slate-800 text-xs truncate w-full">${booking.team2}</div>
+                                <div class="absolute top-1 right-1 text-[10px] text-slate-400 font-mono">${booking.customStartTime || (slot + ':00')}</div>
+                            </div>`;
+                        }
+                        return `
+                        <button onclick="handlers.openBookingModal('${court.id}', ${slot})" 
+                            class="w-full bg-white hover:bg-green-50 border border-dashed border-slate-300 rounded-lg h-24 flex flex-col justify-center items-center group">
+                            <div class="text-lg font-mono font-medium text-slate-400 group-hover:text-green-600 mb-1">${slot}:00</div>
+                            <div class="flex items-center gap-1 text-slate-300 group-hover:text-green-500 text-xs"><i data-lucide="plus" class="w-3 h-3"></i> 空闲</div>
+                        </button>`;
+                    }).join('');
+                    return `
+                    <div class="min-w-[280px] w-[85vw] sm:w-[300px] bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+                        <div class="p-3 bg-slate-50 border-b border-slate-100">
+                            <h3 class="font-bold text-slate-900 truncate">${court.name}</h3>
+                            <div class="flex items-center text-xs text-slate-500 mt-1">
+                                <i data-lucide="map-pin" class="w-3 h-3 mr-1"></i> ${court.location}
+                                <span class="mx-2">|</span> <span class="font-mono text-brand-600 font-bold">¥${court.defaultPrice}/场</span>
+                            </div>
+                        </div>
+                        <div class="p-2 space-y-2 bg-slate-100/50">${slotsHtml}</div>
+                    </div>`;
+                }).join('');
+
+                return `
+                <div class="animate-fade-in pb-4">
+                    <div class="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200 p-4 shadow-sm">
+                        <div class="flex items-center justify-between mb-4">
+                             <div class="flex items-center gap-2">
+                                <div class="bg-brand-600 p-1.5 rounded text-white"><i data-lucide="trophy" class="w-5 h-5"></i></div>
+                                <h1 class="font-bold text-lg text-slate-800">长虫山足球公园</h1>
+                             </div>
+                        </div>
+                        <div class="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-200 gap-2">
+                             <button onclick="handlers.changeDate(-1)" class="p-2 hover:bg-slate-200 rounded-lg text-slate-500"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
+                             <div class="flex-1 flex flex-col items-center">
+                                <div class="font-bold text-sm text-brand-700 flex items-center gap-2"><i data-lucide="calendar" class="w-4 h-4"></i> ${dateDisplay}</div>
+                                <input type="date" value="${state.date}" onchange="handlers.setDate(this.value)" class="bg-transparent text-xs text-slate-400 mt-1 border-0 p-0 text-center w-28">
+                             </div>
+                             <button onclick="handlers.changeDate(1)" class="p-2 hover:bg-slate-200 rounded-lg text-slate-500"><i data-lucide="chevron-right" class="w-5 h-5"></i></button>
+                        </div>
+                    </div>
+                    <div class="p-4 overflow-x-auto no-scrollbar"><div class="flex gap-4">${courtsHtml}</div></div>
+                </div>`;
+            },
+            ledger: () => {
+                const curr = new Date(state.date);
+                const day = curr.getDay(); 
+                const diff = curr.getDate() - day + (day === 0 ? -6 : 1); 
+                const monday = new Date(curr.setDate(diff));
+                const sunday = new Date(new Date(monday).setDate(monday.getDate() + 6));
+                const startStr = formatDate(monday); const endStr = formatDate(sunday);
+                const weeklyBookings = state.bookings.filter(b => b.date >= startStr && b.date <= endStr).sort((a,b) => new Date(b.date) - new Date(a.date) || b.timeSlot - a.timeSlot);
+                const weeklyGenExps = state.generalExpenses.filter(e => e.date >= startStr && e.date <= endStr);
+                const totalGenExp = weeklyGenExps.reduce((s,e) => s + (e.amount || 0), 0);
+                const summary = weeklyBookings.reduce((acc, b) => {
+                    const exp = b.accounting.expenses.reduce((s,e) => s + (Number(e.amount)||0), 0);
+                    return { receivable: acc.receivable + b.accounting.receivable, received: acc.received + b.accounting.received, expenses: acc.expenses + exp };
+                }, { receivable: 0, received: 0, expenses: 0 });
+                summary.expenses += totalGenExp;
+                const profit = summary.received - summary.expenses;
+
+                let bookingsListHtml = weeklyBookings.length === 0 ? `<div class="p-8 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">本周无记录</div>` : weeklyBookings.map(b => {
+                        const court = state.courts.find(c => c.id === b.courtId);
+                        const courtName = court ? court.name.replace('长虫山','') : '未知';
+                        const isExpanded = state.editingBookingId === b.id;
+                        const acc = b.accounting;
+                        const thisExp = acc.expenses.reduce((s,e)=>s+(Number(e.amount)||0),0);
+                        const thisProfit = acc.received - thisExp;
+                        const expenseInputs = acc.expenses.map((e, idx) => `
+                            <div class="flex items-center gap-2 text-sm mb-2">
+                                <span class="w-1/3 truncate text-slate-500">${e.name}</span>
+                                <div class="flex-1 relative">
+                                    <span class="absolute left-2 top-1.5 text-xs text-slate-400">¥</span>
+                                    <input type="number" value="${e.amount}" onchange="handlers.updateBookingExpense('${b.id}', ${idx}, this.value)" class="w-full pl-5 p-1 border rounded bg-slate-50 text-right font-mono text-red-500">
+                                </div>
+                            </div>
+                        `).join('');
+                        return `
+                        <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm mb-3">
+                            <div class="p-3 bg-slate-50/50 flex justify-between items-center" onclick="handlers.toggleBookingAccordion('${b.id}')">
+                                <div class="flex items-center gap-3">
+                                    <div class="bg-brand-100 text-brand-700 w-10 h-10 rounded-lg flex items-center justify-center font-bold text-xs">${courtName}</div>
+                                    <div><div class="text-xs text-slate-500">${b.date.slice(5)} ${b.customStartTime || (b.timeSlot+':00')}</div><div class="font-bold text-sm text-slate-800">${b.team1} vs ${b.team2}</div></div>
+                                </div>
+                                <div class="text-right"><div class="text-xs text-slate-400">净利</div><div class="font-mono font-bold ${thisProfit>=0?'text-green-600':'text-red-500'}">¥${thisProfit}</div></div>
+                            </div>
+                            ${isExpanded ? `
+                            <div class="p-4 border-t border-slate-100 animate-fade-in">
+                                <div class="grid grid-cols-2 gap-4 mb-4">
+                                    <div><label class="text-xs text-slate-400 block mb-1">应收</label><input type="number" value="${acc.receivable}" onchange="handlers.updateBookingVal('${b.id}', 'receivable', this.value)" class="w-full border rounded p-2 font-mono"></div>
+                                    <div><label class="text-xs text-slate-400 block mb-1">实收</label><input type="number" value="${acc.received}" onchange="handlers.updateBookingVal('${b.id}', 'received', this.value)" class="w-full border border-green-300 bg-green-50 text-green-700 font-bold rounded p-2 font-mono"></div>
+                                </div>
+                                <div class="border-t border-dashed border-slate-200 pt-3"><div class="flex justify-between text-xs font-bold text-slate-500 mb-2"><span>支出明细</span> <span class="text-red-500">-¥${thisExp}</span></div>${expenseInputs}</div>
+                                <div class="mt-4 flex justify-between items-center"><button onclick="handlers.deleteBooking('${b.id}')" class="text-red-400 text-xs flex items-center gap-1"><i data-lucide="trash-2" class="w-3 h-3"></i> 取消预约</button><button onclick="handlers.toggleBookingAccordion(null)" class="bg-brand-600 text-white px-4 py-1.5 rounded-lg text-sm">收起</button></div>
+                            </div>` : ''}
+                        </div>`;
+                    }).join('');
+                const miscListHtml = weeklyGenExps.map(e => `
+                    <div class="flex justify-between items-center text-sm p-2 bg-slate-50 rounded border border-slate-100 mb-2"><span>${e.name}</span><div class="flex items-center gap-3"><span class="font-mono text-red-500 font-bold">-¥${e.amount}</span><button onclick="handlers.deleteGeneralExpense('${e.id}')" class="text-slate-300"><i data-lucide="x" class="w-4 h-4"></i></button></div></div>
+                `).join('');
+                return `
+                <div class="animate-fade-in p-4 pb-20">
+                    <div class="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 mb-4 shadow-sm">
+                        <button onclick="handlers.changeDate(-7)"><i data-lucide="chevron-left" class="w-5 h-5 text-slate-500"></i></button>
+                        <div class="text-center"><h2 class="font-bold text-slate-800">每周账本</h2><div class="text-xs text-slate-400 font-mono">${startStr} ~ ${endStr}</div></div>
+                        <button onclick="handlers.changeDate(7)"><i data-lucide="chevron-right" class="w-5 h-5 text-slate-500"></i></button>
+                    </div>
+                    <div class="bg-slate-900 text-white p-4 rounded-xl shadow-lg mb-6">
+                        <div class="flex justify-between items-start mb-4">
+                            <div><div class="text-xs text-slate-400 mb-1">本周净利润</div><div class="text-3xl font-mono font-bold ${profit>=0?'text-green-400':'text-red-400'}">¥${profit.toLocaleString()}</div></div>
+                            <div class="text-right"><div class="text-xs text-slate-400">总营收</div><div class="font-mono font-bold text-lg">¥${summary.received.toLocaleString()}</div></div>
+                        </div>
+                        <div class="flex gap-4 pt-4 border-t border-slate-800">
+                             <div><div class="text-[10px] text-slate-500 uppercase">应收款</div><div class="font-mono text-sm">¥${summary.receivable.toLocaleString()}</div></div>
+                             <div><div class="text-[10px] text-slate-500 uppercase">总支出</div><div class="font-mono text-sm text-red-400">¥${summary.expenses.toLocaleString()}</div></div>
+                        </div>
+                    </div>
+                    <div class="flex gap-2 mb-6"><button onclick="handlers.openDefaultSettings()" class="flex-1 bg-white border border-slate-200 py-2 rounded-lg text-sm text-slate-600 flex items-center justify-center gap-1 shadow-sm"><i data-lucide="settings" class="w-4 h-4"></i> 默认支出</button><button onclick="handlers.openAddGenExp()" class="flex-1 bg-white border border-slate-200 py-2 rounded-lg text-sm text-slate-600 flex items-center justify-center gap-1 shadow-sm"><i data-lucide="plus" class="w-4 h-4"></i> 其他支出</button></div>
+                    <h3 class="font-bold text-slate-700 mb-3 text-sm">预约列表</h3>
+                    ${bookingsListHtml}
+                    ${weeklyGenExps.length > 0 ? `<h3 class="font-bold text-slate-700 mt-6 mb-3 text-sm">其他支出</h3><div class="bg-white p-3 rounded-xl border border-slate-200">${miscListHtml}</div>` : ''}
+                </div>`;
+            },
+            reports: () => {
+                const refDate = state.reportRefDate;
+                const mode = state.reportViewMode;
+                let displayData = [];
+                const calculateStats = (filteredBookings, filteredGenExps) => {
+                    const received = filteredBookings.reduce((sum, b) => sum + (b.accounting.received || 0), 0);
+                    const bExps = filteredBookings.reduce((sum, b) => sum + b.accounting.expenses.reduce((s, e) => s + (Number(e.amount)||0), 0), 0);
+                    const gExps = filteredGenExps.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+                    return { received, totalExpenses: bExps + gExps, profit: received - (bExps + gExps) };
+                };
+                if (mode === 'month') {
+                    for(let i=0; i<6; i++) {
+                        const targetDate = new Date(refDate); targetDate.setDate(1); targetDate.setMonth(targetDate.getMonth() - i);
+                        const mStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth()+1).padStart(2,'0')}`;
+                        const mBookings = state.bookings.filter(b => b.date.startsWith(mStr));
+                        const mGenExps = state.generalExpenses.filter(e => e.date.startsWith(mStr));
+                        const stats = calculateStats(mBookings, mGenExps);
+                        const fixedCost = state.monthlyFixedCosts.find(fc => fc.month === mStr)?.amount || 0;
+                        stats.totalExpenses += fixedCost; stats.profit -= fixedCost;
+                        displayData.push({ label: mStr, stats });
+                    }
+                } else if (mode === 'year') {
+                    for(let i=0; i<3; i++) {
+                         const year = String(refDate.getFullYear() - i);
+                         const yBookings = state.bookings.filter(b => b.date.startsWith(year));
+                         const yGenExps = state.generalExpenses.filter(e => e.date.startsWith(year));
+                         const stats = calculateStats(yBookings, yGenExps);
+                         const yFixed = state.monthlyFixedCosts.filter(fc => fc.month.startsWith(year)).reduce((s,fc)=>s+fc.amount,0);
+                         stats.totalExpenses += yFixed; stats.profit -= yFixed;
+                         displayData.push({ label: year + '年', stats });
+                    }
+                } else {
+                    for (let i=0; i<4; i++) {
+                        const d = new Date(refDate); d.setDate(d.getDate() - (i*7));
+                        const day = d.getDay() || 7; const monday = new Date(d); monday.setDate(d.getDate() - day + 1);
+                        const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+                        const sStr = formatDate(monday); const eStr = formatDate(sunday);
+                        const wBookings = state.bookings.filter(b => b.date >= sStr && b.date <= eStr);
+                        const wGenExps = state.generalExpenses.filter(e => e.date >= sStr && e.date <= eStr);
+                        displayData.push({ label: `${sStr.slice(5)}~${eStr.slice(5)}`, stats: calculateStats(wBookings, wGenExps) });
+                    }
+                }
+                displayData.reverse();
+                const maxVal = Math.max(...displayData.map(d => d.stats.received), 100);
+                const barsHtml = displayData.map(d => {
+                    const h = Math.max((d.stats.received / maxVal) * 100, 2);
+                    const profP = d.stats.received > 0 ? (d.stats.profit / d.stats.received) * 100 : 0;
+                    return `
+                    <div class="flex-1 flex flex-col justify-end items-center gap-1 h-full w-full group relative">
+                        <div class="text-[10px] text-brand-600 font-bold">¥${d.stats.received}</div>
+                        <div class="w-full max-w-[40px] bg-brand-200 rounded-t-sm relative overflow-hidden" style="height: ${h}%"><div class="absolute bottom-0 w-full ${d.stats.profit>=0?'bg-brand-600':'bg-red-500'}" style="height: ${Math.max(profP,0)}%; opacity:0.8"></div></div>
+                        <div class="text-[10px] text-slate-400 font-mono scale-90">${d.label}</div>
+                    </div>`;
+                }).join('');
+                const monthlyStats = {};
+                state.bookings.forEach(b => {
+                    const m = b.date.slice(0, 7); if(!monthlyStats[m]) monthlyStats[m] = { received:0, exp:0, count:0 };
+                    monthlyStats[m].received += b.accounting.received; monthlyStats[m].exp += b.accounting.expenses.reduce((s,e)=>s+(Number(e.amount)||0),0); monthlyStats[m].count++;
+                });
+                state.generalExpenses.forEach(e => { const m = e.date.slice(0, 7); if(!monthlyStats[m]) monthlyStats[m] = { received:0, exp:0, count:0 }; monthlyStats[m].exp += e.amount; });
+                const sortedMonths = Object.keys(monthlyStats).sort().reverse();
+                const rowsHtml = sortedMonths.map(m => {
+                    const s = monthlyStats[m]; const fixed = state.monthlyFixedCosts.find(fc => fc.month === m)?.amount || 0;
+                    const totalExp = s.exp + fixed; const profit = s.received - totalExp;
+                    return `
+                    <tr class="border-b border-slate-50 last:border-0 text-sm">
+                        <td class="py-3 pl-4 font-mono font-bold text-slate-700">${m}</td><td class="text-right text-slate-600">¥${s.received}</td><td class="text-right text-red-400">¥${s.exp}</td>
+                        <td class="py-2 text-center"><input type="number" value="${fixed}" onchange="handlers.updateMonthlyFixed('${m}', this.value)" class="w-20 text-center border rounded bg-slate-50 text-xs py-1"></td>
+                        <td class="py-3 pr-4 text-right font-bold ${profit>=0?'text-green-600':'text-red-600'}">¥${profit}</td>
+                    </tr>`;
+                }).join('');
+                return `
+                <div class="animate-fade-in p-4 pb-20">
+                    <div class="flex justify-between items-center mb-4"><h1 class="text-2xl font-bold text-slate-800">报表</h1><button onclick="app.exportToCSV()" class="bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex gap-1"><i data-lucide="download" class="w-3 h-3"></i> 导出</button></div>
+                    <div class="flex justify-between items-center bg-white p-1 rounded-xl border border-slate-200 shadow-sm mb-4">
+                        <div class="flex">${['week','month','year'].map(m => `<button onclick="handlers.setReportMode('${m}')" class="px-3 py-1.5 text-xs rounded-lg ${state.reportViewMode===m?'bg-brand-600 text-white':'text-slate-500'}">${m==='week'?'周':m==='month'?'月':'年'}</button>`).join('')}</div>
+                        <div class="flex items-center gap-2 px-2"><button onclick="handlers.navReportDate(-1)"><i data-lucide="chevron-left" class="w-4 h-4 text-slate-400"></i></button><button onclick="handlers.navReportDate(1)"><i data-lucide="chevron-right" class="w-4 h-4 text-slate-400"></i></button></div>
+                    </div>
+                    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6"><div class="h-48 flex items-end justify-between gap-1 border-b border-slate-100 pb-2">${barsHtml}</div></div>
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto"><table class="w-full text-xs whitespace-nowrap"><thead class="bg-slate-50 text-slate-400"><tr><th class="py-2 pl-4 text-left">月份</th><th class="text-right">营收</th><th class="text-right">变动支出</th><th class="text-center">固定月费</th><th class="py-2 pr-4 text-right">净利</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>
+                </div>`;
+            },
+            admin: () => {
+                const courtsList = state.courts.map(c => `
+                    <div class="bg-white p-3 rounded-lg border border-slate-200 mb-2 shadow-sm flex justify-between items-center relative group">
+                        <div class="flex-1 pr-4">
+                            <div class="space-y-1">
+                                ${state.editingCourtNameId === c.id ? 
+                                    `<div class="flex items-center gap-1">
+                                        <input id="edit-name-${c.id}" value="${c.name}" class="font-bold text-slate-800 border rounded p-1 w-32" />
+                                        <button onclick="handlers.saveCourtName('${c.id}')" class="text-green-600 bg-green-50 p-1 rounded"><i data-lucide="check" class="w-3 h-3"></i></button>
+                                        <button onclick="handlers.toggleEditName(null)" class="text-red-500 bg-red-50 p-1 rounded"><i data-lucide="x" class="w-3 h-3"></i></button>
+                                    </div>` 
+                                    : 
+                                    `<div onclick="handlers.toggleEditName('${c.id}')" class="font-bold text-slate-800 cursor-pointer hover:text-brand-600 flex items-center gap-1" title="点击修改名称">
+                                        ${c.name} <i data-lucide="edit-3" class="w-3 h-3 text-slate-300"></i>
+                                    </div>`
+                                }
+                                
+                                ${state.editingCourtLocationId === c.id ?
+                                    `<div class="flex items-center gap-1">
+                                        <i data-lucide="map-pin" class="w-3 h-3 text-slate-400"></i>
+                                        <input id="edit-loc-${c.id}" value="${c.location}" class="text-xs text-slate-600 border rounded p-1 w-24" />
+                                        <button onclick="handlers.saveCourtLocation('${c.id}')" class="text-green-600 bg-green-50 p-0.5 rounded"><i data-lucide="check" class="w-3 h-3"></i></button>
+                                        <button onclick="handlers.toggleEditLocation(null)" class="text-red-500 bg-red-50 p-0.5 rounded"><i data-lucide="x" class="w-3 h-3"></i></button>
+                                    </div>`
+                                    :
+                                    `<div onclick="handlers.toggleEditLocation('${c.id}')" class="flex items-center gap-1 text-xs text-slate-400 cursor-pointer hover:text-brand-600" title="点击修改地址">
+                                       <i data-lucide="map-pin" class="w-3 h-3"></i>
+                                       ${c.location}
+                                       <i data-lucide="edit-3" class="w-3 h-3 text-slate-300 opacity-50"></i>
+                                    </div>`
+                                }
+
+                                ${state.editingCourtPriceId === c.id ?
+                                    `<div class="flex items-center gap-1 mt-1">
+                                        <span class="text-slate-600 text-xs">¥</span>
+                                        <input id="edit-price-${c.id}" type="number" value="${c.defaultPrice}" class="w-16 border rounded p-0.5 text-xs font-mono font-bold" />
+                                        <button onclick="handlers.saveCourtPrice('${c.id}')" class="text-green-600 hover:bg-green-50 rounded"><i data-lucide="check" class="w-3 h-3"></i></button>
+                                        <button onclick="handlers.toggleEditPrice(null)" class="text-red-500 hover:bg-red-50 rounded"><i data-lucide="x" class="w-3 h-3"></i></button>
+                                    </div>`
+                                    :
+                                    `<div onclick="handlers.toggleEditPrice('${c.id}')" class="mt-1 font-mono text-brand-600 font-bold cursor-pointer hover:underline flex items-center gap-1 text-xs">
+                                        ¥${c.defaultPrice}/场 <i data-lucide="edit-2" class="w-3 h-3 text-slate-300"></i>
+                                    </div>`
+                                }
+                            </div>
+                        </div>
+                        <button onclick="handlers.deleteCourt('${c.id}')" class="p-2 bg-slate-50 text-slate-400 rounded-full hover:bg-red-50 hover:text-red-500">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                `).join('');
+
+                const resetButtonHtml = state.resetConfirmStep === 0 
+                   ? `<button onclick="handlers.initResetData()" class="text-red-400 text-xs underline py-2">重置所有数据</button>`
+                   : `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-center animate-fade-in">
+                        <div class="text-red-600 font-bold text-sm mb-2">确定要清空所有数据吗？</div>
+                        <div class="flex justify-center gap-4">
+                           <button onclick="handlers.confirmResetData()" class="bg-red-600 text-white px-4 py-1.5 rounded text-xs font-bold">确认</button>
+                           <button onclick="handlers.cancelResetData()" class="bg-white border border-slate-300 text-slate-600 px-4 py-1.5 rounded text-xs">取消</button>
+                        </div>
+                      </div>`;
+
+                return `
+                <div class="animate-fade-in p-4 pb-20">
+                    <div class="bg-slate-900 text-white p-6 rounded-2xl shadow-lg mb-6"><h1 class="text-xl font-bold">后台管理</h1><p class="text-xs text-slate-400 mt-1">版本 HTML/JS v1.0.6</p></div>
+                    
+                    <div class="flex gap-2 mb-6">
+                        <button onclick="app.backupData()" class="flex-1 bg-white border border-slate-200 text-slate-700 py-3 rounded-xl shadow-sm hover:bg-slate-50 flex items-center justify-center gap-2 font-bold"><i data-lucide="download" class="w-4 h-4 text-brand-600"></i> 备份数据</button>
+                        <button onclick="document.getElementById('file-restore').click()" class="flex-1 bg-white border border-slate-200 text-slate-700 py-3 rounded-xl shadow-sm hover:bg-slate-50 flex items-center justify-center gap-2 font-bold"><i data-lucide="upload" class="w-4 h-4 text-brand-600"></i> 恢复数据</button>
+                        <input type="file" id="file-restore" class="hidden" accept=".json" onchange="app.restoreData(this.files[0])">
+                    </div>
+
+                    <div class="flex justify-between items-center mb-3"><h3 class="font-bold text-slate-700">场地管理</h3><button onclick="handlers.openAddCourtModal()" class="text-brand-600 text-sm font-bold flex items-center gap-1"><i data-lucide="plus" class="w-4 h-4"></i> 新增</button></div>
+                    <div>${courtsList}</div>
+                    <div class="mt-8 text-center">${resetButtonHtml}</div>
+                </div>`;
+            }
+        };
+
+        /**
+         * Event Handlers
+         */
+        const handlers = {
+            changeDate: (offset) => {
+                const d = new Date(state.date);
+                d.setDate(d.getDate() + offset);
+                state.date = d.toISOString().split('T')[0];
+                router.render();
+            },
+            setDate: (val) => {
+                if(val) {
+                    state.date = val;
+                    router.render();
+                }
+            },
+            closeModal: () => {
+                document.getElementById('modal-container').innerHTML = '';
+            },
+            // Booking
+            openBookingModal: (courtId, slot) => {
+                const court = state.courts.find(c => c.id === courtId);
+                const booking = state.bookings.find(b => b.courtId === courtId && b.date === state.date && b.timeSlot === slot);
+                
+                if (booking) {
+                    // Edit Mode
+                    const html = `
+                    <div class="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                        <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden">
+                            <div class="bg-slate-900 p-4 text-white flex justify-between items-center">
+                                <div><div class="font-bold text-lg">修改预约</div><div class="text-xs text-slate-400">${court.name} | ${slot}:00</div></div>
+                                <button onclick="handlers.closeModal()"><i data-lucide="x" class="w-6 h-6"></i></button>
+                            </div>
+                            <div class="p-6 space-y-4">
+                                <div class="flex items-center gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                    <i data-lucide="clock" class="w-4 h-4 text-slate-400"></i>
+                                    <span class="text-sm font-bold text-slate-600">开始时间</span>
+                                    <input type="time" id="edit-start-time" value="${booking.customStartTime || (slot+':00')}" class="ml-auto bg-white border border-slate-300 rounded px-2 py-1 text-sm font-mono font-bold" />
+                                </div>
+                                <div class="text-center font-bold text-slate-800">${booking.team1} VS ${booking.team2}</div>
+                                <button onclick="handlers.updateBookingTime('${booking.id}')" class="w-full bg-brand-600 text-white py-3 rounded-xl font-bold shadow-lg mt-2">保存修改</button>
+                                <button onclick="handlers.deleteBooking('${booking.id}'); handlers.closeModal();" class="w-full text-red-500 text-sm py-2">取消预约</button>
+                            </div>
+                        </div>
+                    </div>`;
+                    document.getElementById('modal-container').innerHTML = html;
+                    lucide.createIcons();
+                    return;
+                }
+
+                // Create Mode
+                const html = `
+                <div class="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                    <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden">
+                        <div class="bg-slate-900 p-4 text-white flex justify-between items-center">
+                            <div><div class="font-bold text-lg">锁定场次</div><div class="text-xs text-slate-400">${court.name} | ${slot}:00</div></div>
+                            <button onclick="handlers.closeModal()"><i data-lucide="x" class="w-6 h-6"></i></button>
+                        </div>
+                        <div class="p-6 space-y-4">
+                            <div class="flex items-center gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                                <i data-lucide="clock" class="w-4 h-4 text-slate-400"></i>
+                                <span class="text-sm font-bold text-slate-600">开始时间</span>
+                                <input type="time" id="start-time" value="${slot}:00" class="ml-auto bg-white border border-slate-300 rounded px-2 py-1 text-sm font-mono font-bold" />
+                            </div>
+                            <div class="flex flex-col sm:flex-row items-center gap-4">
+                                <div class="flex-1 w-full space-y-1"><label class="text-xs font-bold text-slate-500">主队</label><input id="team1" placeholder="队伍 A" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-center font-bold"></div>
+                                <div class="font-bold text-slate-300 pt-0 sm:pt-4">VS</div>
+                                <div class="flex-1 w-full space-y-1"><label class="text-xs font-bold text-slate-500">客队</label><input id="team2" placeholder="队伍 B" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-center font-bold"></div>
+                            </div>
+                            <div class="bg-brand-50 p-3 rounded-lg border border-brand-100 flex justify-between items-center">
+                                <span class="text-sm font-bold text-brand-700">预约费用 (应收)</span>
+                                <div class="relative">
+                                    <span class="absolute left-2 top-1.5 text-xs text-brand-400">¥</span>
+                                    <input type="number" id="booking-price" value="${court.defaultPrice}" class="w-24 pl-5 p-1 text-right font-bold text-brand-700 border border-brand-200 rounded-lg focus:ring-2 focus:ring-brand-500 outline-none font-mono" />
+                                </div>
+                            </div>
+                            <button onclick="handlers.confirmBooking('${courtId}', ${slot})" class="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg mt-2">确认</button>
+                        </div>
+                    </div>
+                </div>`;
+                document.getElementById('modal-container').innerHTML = html;
+                lucide.createIcons();
+            },
+            confirmBooking: async (courtId, slot) => {
+                const t1 = document.getElementById('team1').value;
+                const t2 = document.getElementById('team2').value;
+                const st = document.getElementById('start-time').value;
+                const price = document.getElementById('booking-price').value;
+                if(t1 && t2) {
+                    await app.addBooking(courtId, slot, t1, t2, st, price);
+                    handlers.closeModal();
+                } else alert('请输入队伍名称');
+            },
+            updateBookingTime: async (bookingId) => {
+                const newTime = document.getElementById('edit-start-time').value;
+                const booking = state.bookings.find(b => b.id === bookingId);
+                if(booking) {
+                    booking.customStartTime = newTime;
+                    await db.put('bookings', booking);
+                    await app.loadData();
+                    router.render();
+                    handlers.closeModal();
+                }
+            },
+            deleteBooking: async (id) => {
+                if(confirm('确定取消?')) await app.deleteBooking(id);
+            },
+            // Ledger
+            toggleBookingAccordion: (id) => {
+                state.editingBookingId = state.editingBookingId === id ? null : id;
+                router.render();
+            },
+            updateBookingVal: (id, field, val) => {
+                const b = state.bookings.find(x => x.id === id);
+                if(b) {
+                    b.accounting[field] = parseFloat(val) || 0;
+                    app.updateBookingAccounting(id, b.accounting);
+                }
+            },
+            updateBookingExpense: (id, idx, val) => {
+                const b = state.bookings.find(x => x.id === id);
+                if(b) {
+                    b.accounting.expenses[idx].amount = parseFloat(val) || 0;
+                    app.updateBookingAccounting(id, b.accounting);
+                }
+            },
+            // Settings
+            openDefaultSettings: () => {
+                const expsHtml = state.defaultExpenses.map((e, i) => `
+                    <div class="flex gap-2 mb-2 items-center">
+                        <input value="${e.name}" id="def-name-${i}" class="w-1/2 border rounded p-2 text-sm">
+                        <input type="number" value="${e.amount}" id="def-val-${i}" class="w-24 border rounded p-2 text-sm text-right">
+                        <button onclick="handlers.removeDefExp(${i})" class="text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    </div>
+                `).join('');
+                document.getElementById('modal-container').innerHTML = `
+                <div class="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+                    <div class="bg-white w-full max-w-sm rounded-2xl p-6">
+                        <h3 class="font-bold mb-4">默认支出设置</h3>
+                        <div class="max-h-60 overflow-y-auto mb-4" id="def-exp-list">${expsHtml}</div>
+                        <button onclick="handlers.addDefExpItem()" class="text-xs text-brand-600 mb-4">+ 添加项</button>
+                        <div class="space-y-2">
+                            <button onclick="handlers.saveDefaultSettings()" class="w-full bg-brand-600 text-white py-2 rounded-lg">保存设置</button>
+                            <button onclick="handlers.saveAndOverwriteDefaults()" class="w-full border border-red-200 text-red-500 py-2 rounded-lg">保存并覆盖本周</button>
+                            <button onclick="handlers.closeModal()" class="w-full text-slate-400 py-2">取消</button>
+                        </div>
+                    </div>
+                </div>`;
+                lucide.createIcons();
+            },
+            addDefExpItem: () => { state.defaultExpenses.push({ id: `new_${Date.now()}`, name: '新支出', amount: 0, isFixed: false }); handlers.openDefaultSettings(); },
+            removeDefExp: (idx) => { state.defaultExpenses.splice(idx, 1); handlers.openDefaultSettings(); },
+            saveDefaultSettings: async () => {
+                const newExps = state.defaultExpenses.map((e, i) => ({ ...e, name: document.getElementById(`def-name-${i}`).value, amount: parseFloat(document.getElementById(`def-val-${i}`).value) || 0 }));
+                await app.updateDefaultExpenses(newExps); handlers.closeModal();
+            },
+            saveAndOverwriteDefaults: async () => {
+                if(!confirm('确定覆盖本周?')) return;
+                const newExps = state.defaultExpenses.map((e, i) => ({ ...e, name: document.getElementById(`def-name-${i}`).value, amount: parseFloat(document.getElementById(`def-val-${i}`).value) || 0 }));
+                await app.updateDefaultExpenses(newExps);
+                const curr = new Date(state.date); const day = curr.getDay(); const diff = curr.getDate() - day + (day === 0 ? -6 : 1); 
+                const monday = new Date(curr.setDate(diff)); const sunday = new Date(new Date(monday).setDate(monday.getDate() + 6));
+                const sStr = formatDate(monday); const eStr = formatDate(sunday);
+                const weeklyBookings = state.bookings.filter(b => b.date >= sStr && b.date <= eStr);
+                weeklyBookings.forEach(b => { b.accounting.expenses = JSON.parse(JSON.stringify(newExps)); });
+                await app.batchUpdateExpenses(weeklyBookings); handlers.closeModal();
+            },
+            // General Exp
+            openAddGenExp: () => {
+                document.getElementById('modal-container').innerHTML = `
+                <div class="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+                    <div class="bg-white w-full max-w-sm rounded-2xl p-6">
+                        <h3 class="font-bold mb-4">添加其他支出</h3>
+                        <input id="genName" placeholder="名称" class="w-full border rounded p-2 mb-3">
+                        <input id="genAmount" type="number" placeholder="金额" class="w-full border rounded p-2 mb-4">
+                        <button onclick="handlers.confirmAddGenExp()" class="w-full bg-slate-900 text-white py-2 rounded-lg">确认</button>
+                        <button onclick="handlers.closeModal()" class="w-full text-slate-400 py-2 mt-2">取消</button>
+                    </div>
+                </div>`;
+            },
+            confirmAddGenExp: async () => {
+                const name = document.getElementById('genName').value; const amt = document.getElementById('genAmount').value;
+                if(name && amt) { await app.addGeneralExpense({ id: Math.random().toString(36).substr(2,9), name, amount: parseFloat(amt), date: state.date }); handlers.closeModal(); }
+            },
+            deleteGeneralExpense: async (id) => await app.deleteGeneralExpense(id),
+            // Admin Court
+            openAddCourtModal: () => {
+                document.getElementById('modal-container').innerHTML = `
+                <div class="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+                    <div class="bg-white w-full max-w-sm rounded-2xl p-6">
+                        <h3 class="font-bold mb-4">新增球场</h3>
+                        <input id="cName" placeholder="名称" class="w-full border rounded p-2 mb-2">
+                        <input id="cLoc" placeholder="位置" class="w-full border rounded p-2 mb-2">
+                        <input id="cPrice" type="number" placeholder="价格 (2200)" class="w-full border rounded p-2 mb-4">
+                        <button onclick="handlers.confirmAddCourt()" class="w-full bg-brand-600 text-white py-2 rounded-lg">添加</button>
+                        <button onclick="handlers.closeModal()" class="w-full text-slate-400 py-2 mt-2">取消</button>
+                    </div>
+                </div>`;
+            },
+            confirmAddCourt: async () => {
+                const name = document.getElementById('cName').value; const price = document.getElementById('cPrice').value; const loc = document.getElementById('cLoc').value;
+                if(name && price) { await app.addCourt({ id: 'c_' + Date.now(), name, type: '足球场', description: '新增', location: loc||'A区', defaultPrice: parseFloat(price) }); handlers.closeModal(); }
+            },
+            deleteCourt: async (id) => { if(confirm('确定删除?')) await app.deleteCourt(id); },
+            
+            // Name Editing
+            toggleEditName: (id) => { state.editingCourtNameId = id; router.render(); },
+            saveCourtName: async (id) => {
+                const val = document.getElementById(`edit-name-${id}`).value;
+                if(val) { await app.updateCourtName(id, val); state.editingCourtNameId = null; router.render(); }
+            },
+            // Price Editing
+            toggleEditPrice: (id) => { state.editingCourtPriceId = id; router.render(); },
+            saveCourtPrice: async (id) => {
+                const val = document.getElementById(`edit-price-${id}`).value;
+                if(val) { await app.updateCourtPrice(id, parseFloat(val)||0); state.editingCourtPriceId = null; router.render(); }
+            },
+            // Location Editing
+            toggleEditLocation: (id) => { state.editingCourtLocationId = id; router.render(); },
+            saveCourtLocation: async (id) => {
+                const val = document.getElementById(`edit-loc-${id}`).value;
+                if(val) { await app.updateCourtLocation(id, val); state.editingCourtLocationId = null; router.render(); }
+            },
+
+            // Reset
+            initResetData: () => { state.resetConfirmStep = 1; router.render(); },
+            cancelResetData: () => { state.resetConfirmStep = 0; router.render(); },
+            confirmResetData: () => { indexedDB.deleteDatabase(DB_NAME); location.reload(); },
+            // Reports
+            setReportMode: (mode) => { state.reportViewMode = mode; router.render(); },
+            navReportDate: (offset) => {
+                const d = state.reportRefDate;
+                if (state.reportViewMode === 'week') d.setDate(d.getDate() + (offset*28));
+                else if (state.reportViewMode === 'month') d.setMonth(d.getMonth() + (offset*6));
+                else d.setFullYear(d.getFullYear() + (offset*3));
+                state.reportRefDate = new Date(d); router.render();
+            },
+            updateMonthlyFixed: async (month, val) => { await app.updateMonthlyFixedCost(month, parseFloat(val)||0); }
+        };
+
+        app.init();
+    </script>
+</body>
+</html>
